@@ -150,4 +150,4 @@ n8n must be reachable from wherever the click happens. Codes travel in the URL h
 
 ## Author
 
-Built by [Your name]. Questions or pilot enquiries: [your contact link].
+Built by Josh-code. Questions or pilot enquiries: (https://www.linkedin.com/in/joshua-adelasoye-b29474172/).
