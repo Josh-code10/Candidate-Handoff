@@ -1,0 +1,820 @@
+{
+  "name": "Candidate Handoff: CRM to ATS (demo, zero data-retention)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "submit-candidate",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "17c98007-21fe-4c18-af22-8ea8b9615c9d",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "48c1f6be-5ac5-4280-be93-9d4b1f2e6d29"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e12d9efe-3201-4e86-a0d6-5c514209b7c1",
+              "name": "baseId",
+              "value": "REPLACE_WITH_AIRTABLE_BASE_ID",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e0e12667-0536-4e23-9388-72dfe4686544",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pillar D: validate and sanitise input BEFORE anything touches a formula or a model.\nconst body = $('Webhook').first().json.body || {};\nconst re = /^[A-Z]{2,6}-\\d{1,6}$/;\nconst cand = String(body.candidate_code || '').trim().toUpperCase();\nconst job = String(body.job_code || '').trim().toUpperCase();\nconst ok = re.test(cand) && re.test(job);\n\nreturn [{\n  json: {\n    input_valid: ok,\n    // bad input is swapped for a harmless placeholder so it can never reach an Airtable formula\n    candidate_code: ok ? cand : 'INVALID-0',\n    job_code: ok ? job : 'INVALID-0',\n    recruiter: String(body.recruiter || 'unknown').slice(0, 60).replace(/[^\\w .@-]/g, '')\n  }\n}];\n"
+      },
+      "id": "0723ddfe-bc30-4917-9b82-34997e9f4a16",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.airtable.com/v0/{{ $('Config').first().json.baseId }}/Agency_Candidates",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "={candidate_code}='{{ $('Validate Input').first().json.candidate_code }}'"
+            },
+            {
+              "name": "maxRecords",
+              "value": "5"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "08801526-dfa7-44e2-9376-3352ed2e76cb",
+      "name": "Fetch Candidate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "notes": "Adapter: swap this node for the real CRM/ATS connector in a pilot."
+    },
+    {
+      "parameters": {
+        "url": "=https://api.airtable.com/v0/{{ $('Config').first().json.baseId }}/Client_Jobs",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "={job_code}='{{ $('Validate Input').first().json.job_code }}'"
+            },
+            {
+              "name": "maxRecords",
+              "value": "5"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bea4fafa-738a-4223-a051-51ad16ce8834",
+      "name": "Fetch Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "notes": "Adapter: swap this node for the real CRM/ATS connector in a pilot."
+    },
+    {
+      "parameters": {
+        "url": "=https://api.airtable.com/v0/{{ $('Config').first().json.baseId }}/Client_ATS_Candidates",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "=AND({agency_ref}='{{ $('Validate Input').first().json.candidate_code }}',{job_code}='{{ $('Validate Input').first().json.job_code }}')"
+            },
+            {
+              "name": "maxRecords",
+              "value": "5"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6bfc2e4c-2b1c-4218-9507-192f5cb39daa",
+      "name": "Check Client ATS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "notes": "Adapter: swap this node for the real CRM/ATS connector in a pilot."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalise + compliance gate.\n// IMPORTANT: this node does NOT perform right-to-work / ID / background checks.\n// It verifies that the agency's CRM holds valid evidence that those checks were done.\n// The checks themselves stay with the agency's certified providers.\n\n// ---- Tunable demo defaults (assumptions, not legal rules: confirm with each agency) ----\nconst CONSENT_MAX_AGE_DAYS = 90;\nconst RTW_EXPIRY_WARN_DAYS = 30;\n\nconst input = $('Validate Input').first().json;\nconst candRes = $('Fetch Candidate').first().json;\nconst jobRes = $('Fetch Job').first().json;\nconst dupRes = $('Check Client ATS').first().json;\n\nconst cand = candRes.records?.[0]?.fields ?? null;\nconst job = jobRes.records?.[0]?.fields ?? null;\nconst dups = dupRes.records ?? [];\n\nconst ageDays = (d) => Math.floor((Date.now() - new Date(d).getTime()) / 86400000);\nconst daysUntil = (d) => Math.ceil((new Date(d).getTime() - Date.now()) / 86400000);\n\nconst blocks = [];   // any block = candidate cannot be sent\nconst warnings = []; // warnings go to the human reviewer\n\n// ---- Fail-safe: anything we cannot read or trust blocks the submission ----\nif (!input.input_valid) blocks.push('INVALID_INPUT');\nif (candRes.error || jobRes.error || dupRes.error) blocks.push('SOURCE_UNAVAILABLE');\nif (input.input_valid && !candRes.error && !cand) blocks.push('CANDIDATE_NOT_FOUND');\nif (input.input_valid && !jobRes.error && !job) blocks.push('JOB_NOT_FOUND');\nif (dups.length) blocks.push('ALREADY_SUBMITTED_TO_CLIENT');\n\nif (cand && job) {\n  // Schema check on the canonical record\n  const missing = ['full_name', 'email', 'country'].filter((k) => !cand[k]);\n  if (missing.length) blocks.push('RECORD_INCOMPLETE:' + missing.join('+'));\n\n  // 1. Consent to be submitted to THIS client\n  const consentOk = cand.consent_status === 'Granted' &&\n    (cand.consent_scope === 'ANY' || cand.consent_scope === job.client_name);\n  if (!consentOk) blocks.push('CONSENT_MISSING_OR_WRONG_SCOPE');\n  else if (!cand.consent_date || ageDays(cand.consent_date) > CONSENT_MAX_AGE_DAYS) blocks.push('CONSENT_STALE');\n\n  // 2. Right to work: verified, for the right country, not expired\n  if (cand.rtw_status !== 'Verified') {\n    blocks.push('RTW_NOT_VERIFIED');\n  } else {\n    if (cand.rtw_country !== job.country) blocks.push('RTW_WRONG_COUNTRY');\n    if (cand.rtw_expiry) {\n      const d = daysUntil(cand.rtw_expiry);\n      if (d < 0) blocks.push('RTW_EXPIRED');\n      else if (d <= RTW_EXPIRY_WARN_DAYS) warnings.push('RTW_EXPIRES_IN_' + d + '_DAYS');\n    }\n  }\n\n  // 3. Identity\n  if (cand.id_status !== 'Verified') blocks.push('ID_NOT_VERIFIED');\n\n  // 4. Role-specific background check (only when the job requires it)\n  if (job.requires_dbs && cand.dbs_status !== 'Clear') blocks.push('BACKGROUND_CHECK_NOT_CLEAR');\n\n  // 5. References\n  if ((cand.references_received || 0) < (job.min_references || 0)) blocks.push('REFERENCES_INSUFFICIENT');\n\n  // 6. Cross-border data transfer\n  if (cand.country !== job.country && !cand.cross_border_consent) blocks.push('CROSS_BORDER_CONSENT_MISSING');\n}\n\nconst decision = blocks.length ? 'BLOCK' : (warnings.length ? 'REVIEW_WITH_WARNINGS' : 'PASS');\n\nreturn [{\n  json: {\n    candidate_code: input.candidate_code,\n    job_code: input.job_code,\n    recruiter: input.recruiter,\n    decision,\n    reasons: blocks,\n    warnings,\n    // Data minimisation: only what the client's ATS needs, built only if not blocked\n    ats_payload: decision === 'BLOCK' ? null : {\n      agency_ref: input.candidate_code,\n      full_name: cand.full_name,\n      email: cand.email,\n      job_code: input.job_code,\n      status: 'Submitted',\n      submitted_at: new Date().toISOString(),\n      compliance_summary: 'Consent, right to work, ID' + (job.requires_dbs ? ', background check' : '') +\n        ' and references verified' + (warnings.length ? ' | warnings: ' + warnings.join(', ') : '')\n    }\n  }\n}];\n"
+      },
+      "id": "3dae08ee-cd6d-4120-a4f1-3238b40b1729",
+      "name": "Normalise and Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e93844e7-dfb9-4e2e-a0dc-fb6c36be5e55",
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "BLOCK",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "28f7ce05-4c65-4b9b-ad8f-eee379cc049d",
+      "name": "Compliance Passed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_SLACK_CHANNEL_ID",
+          "mode": "id"
+        },
+        "text": "={{ 'APPROVAL NEEDED: ' + $json.candidate_code + ' -> ' + $json.job_code + '\\nCompliance: ' + $json.decision + ($json.warnings.length ? '\\nWarnings: ' + $json.warnings.join(', ') : '') + '\\nRequested by: ' + $json.recruiter + '\\nReview and decide: ' + $execution.resumeFormUrl }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "5344f1f8-fcd1-4ca9-bf70-9a8367a0999e",
+      "name": "Request Approval",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1760,
+        180
+      ],
+      "webhookId": "59698f35-144c-4ae6-943f-5a9722d37c66"
+    },
+    {
+      "parameters": {
+        "resume": "form",
+        "formTitle": "Candidate submission: approve, reject or request changes",
+        "formDescription": "=Candidate {{ $('Normalise and Check').first().json.candidate_code }} for {{ $('Normalise and Check').first().json.job_code }}. Compliance result: {{ $('Normalise and Check').first().json.decision }}.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Decision",
+              "fieldType": "dropdown",
+              "requiredField": true,
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Approve"
+                  },
+                  {
+                    "option": "Reject"
+                  },
+                  {
+                    "option": "Request changes"
+                  }
+                ]
+              }
+            },
+            {
+              "fieldLabel": "Reviewer",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Note"
+            }
+          ]
+        },
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 24,
+        "resumeUnit": "hours",
+        "options": {}
+      },
+      "id": "5b47b92b-e347-431e-9731-421f6fbe6e6e",
+      "name": "Wait for Approval",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        180
+      ],
+      "webhookId": "32b0b618-9b4c-4623-a7aa-a37a8c48b726"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1f82dd7a-1c1e-42db-88c2-effb933e5fba",
+              "leftValue": "={{ $json.Decision || '' }}",
+              "rightValue": "Approve",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "56e8869b-8631-4519-947c-202ace62446e",
+      "name": "Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2200,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.airtable.com/v0/{{ $('Config').first().json.baseId }}/Client_ATS_Candidates",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ typecast: true, records: [{ fields: $('Normalise and Check').first().json.ats_payload }] }) }}",
+        "options": {}
+      },
+      "id": "9cedec71-d0b9-44ee-abfc-f55a1445f32c",
+      "name": "Push to Client ATS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2420,
+        80
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f6aec4da-5caf-4871-bd62-9a4619071e89",
+              "name": "candidate_code",
+              "value": "={{ $('Normalise and Check').first().json.candidate_code }}",
+              "type": "string"
+            },
+            {
+              "id": "1d624135-cb27-4f3d-974b-58c63a933287",
+              "name": "job_code",
+              "value": "={{ $('Normalise and Check').first().json.job_code }}",
+              "type": "string"
+            },
+            {
+              "id": "0f8265ec-974f-4a65-bbff-ab4c2d917475",
+              "name": "outcome",
+              "value": "SUBMITTED",
+              "type": "string"
+            },
+            {
+              "id": "438b23e8-7f3b-486f-9a52-630c60d2db25",
+              "name": "reasons",
+              "value": "={{ $('Normalise and Check').first().json.warnings.length ? 'Warnings: ' + $('Normalise and Check').first().json.warnings.join(', ') : 'All required checks verified' }}",
+              "type": "string"
+            },
+            {
+              "id": "4e5b9384-99eb-4bf3-87a8-b7dac824b447",
+              "name": "reviewed_by",
+              "value": "={{ $('Wait for Approval').first().json.Reviewer }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bfa0bd6c-f90e-46f4-9e65-7a6923899390",
+      "name": "Outcome: Submitted",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2640,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0191e443-e3ae-46de-9061-c64aa4257076",
+              "name": "candidate_code",
+              "value": "={{ $('Normalise and Check').first().json.candidate_code }}",
+              "type": "string"
+            },
+            {
+              "id": "4646eadc-fb16-407d-a62e-c5303b6e56a4",
+              "name": "job_code",
+              "value": "={{ $('Normalise and Check').first().json.job_code }}",
+              "type": "string"
+            },
+            {
+              "id": "d7a85bbd-bdc6-4f94-8a3b-c39af82e6453",
+              "name": "outcome",
+              "value": "PUSH_FAILED",
+              "type": "string"
+            },
+            {
+              "id": "960d9150-d617-46ef-87c7-424ae2e5ee11",
+              "name": "reasons",
+              "value": "Client ATS push failed after retries. Nothing was submitted.",
+              "type": "string"
+            },
+            {
+              "id": "d4ff354b-1a35-48b5-a389-c01abd9596b6",
+              "name": "reviewed_by",
+              "value": "={{ $('Wait for Approval').first().json.Reviewer }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7889c77c-a31b-4984-ac4f-7ffa9da6b428",
+      "name": "Outcome: Push Failed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2640,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a00d1444-a53a-4286-9b64-6941f91a4a88",
+              "name": "candidate_code",
+              "value": "={{ $('Normalise and Check').first().json.candidate_code }}",
+              "type": "string"
+            },
+            {
+              "id": "169211a5-e602-4129-9757-59d8ed5a65b9",
+              "name": "job_code",
+              "value": "={{ $('Normalise and Check').first().json.job_code }}",
+              "type": "string"
+            },
+            {
+              "id": "85cf85ef-f019-40d7-9e91-42ea177b3738",
+              "name": "outcome",
+              "value": "={{ $json.Decision === 'Reject' ? 'REJECTED' : ($json.Decision === 'Request changes' ? 'CHANGES_REQUESTED' : 'EXPIRED') }}",
+              "type": "string"
+            },
+            {
+              "id": "3cd22025-515b-457d-affa-c58eeab2b578",
+              "name": "reasons",
+              "value": "Human review outcome. Reviewer note is not stored (zero data-retention).",
+              "type": "string"
+            },
+            {
+              "id": "b35ca889-7ea1-485f-a668-aad221c647c5",
+              "name": "reviewed_by",
+              "value": "={{ $json.Reviewer || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1bf21150-ea87-499d-ac82-77c018ebe3dc",
+      "name": "Outcome: Not Approved",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "524b5b64-c183-4a77-84f2-c4ea87bcce44",
+              "name": "candidate_code",
+              "value": "={{ $('Normalise and Check').first().json.candidate_code }}",
+              "type": "string"
+            },
+            {
+              "id": "c0a01130-f22e-41b1-a0e9-2ec06afdcc01",
+              "name": "job_code",
+              "value": "={{ $('Normalise and Check').first().json.job_code }}",
+              "type": "string"
+            },
+            {
+              "id": "97ac4884-d4a5-4980-9005-ec3f9eb28a7b",
+              "name": "outcome",
+              "value": "BLOCKED",
+              "type": "string"
+            },
+            {
+              "id": "226f51fc-26f5-4e22-b02c-c0f88315334c",
+              "name": "reasons",
+              "value": "={{ $('Normalise and Check').first().json.reasons.join(', ') }}",
+              "type": "string"
+            },
+            {
+              "id": "fcb69ad8-b16c-42c5-99a3-062cf56d99cb",
+              "name": "reviewed_by",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5d205645-cfd3-40bd-9598-5a2eae07e37e",
+      "name": "Outcome: Blocked",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1760,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.airtable.com/v0/{{ $('Config').first().json.baseId }}/Audit_Log",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ typecast: true, records: [{ fields: { run_id: String($execution.id), event_time: new Date().toISOString(), candidate_code: $json.candidate_code, job_code: $json.job_code, outcome: $json.outcome, reasons: $json.reasons, reviewed_by: $json.reviewed_by } }] }) }}",
+        "options": {}
+      },
+      "id": "8a4c0db3-a7de-4c9f-91a4-6865bb5ed9c9",
+      "name": "Audit Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2900,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_SLACK_CHANNEL_ID",
+          "mode": "id"
+        },
+        "text": "={{ $json.records[0].fields.outcome + ': ' + $json.records[0].fields.candidate_code + ' -> ' + $json.records[0].fields.job_code + ($json.records[0].fields.reasons ? ' | ' + $json.records[0].fields.reasons : '') }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "id": "1230d8c9-366f-4a20-8f5d-184f3b6f4c6c",
+      "name": "Notify Recruiter",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        3120,
+        300
+      ],
+      "webhookId": "019a00cf-c62f-4a86-b7a0-62a757529100"
+    },
+    {
+      "parameters": {
+        "content": "## Candidate Handoff Demo\n\n**Setup**\n1. Run airtable_setup.py and paste the Base ID into the **Config** node\n2. Pick your Airtable credential on the 5 Airtable HTTP nodes\n3. Pick your Slack credential + channel ID on the 2 Slack nodes\n4. Activate, then POST {\"candidate_code\":\"CAND-001\",\"job_code\":\"JOB-1001\",\"recruiter\":\"you\"} to /webhook/submit-candidate\n\n**Demo story:** CAND-001 passes; CAND-002/003/005/006/007 each get blocked for a different reason; CAND-004 passes with a warning.\n\nThis flow verifies EVIDENCE of checks held in the CRM. It does not run right-to-work, ID or background checks itself.",
+        "height": 300,
+        "width": 760
+      },
+      "id": "fb1c32dd-4925-47f1-84f0-ce6aa7df0097",
+      "name": "Note -20",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Zero data-retention (Pillar E)\n- Workflow settings: execution data NOT saved (success, error, manual, progress)\n- Audit_Log holds codes, outcome, reasons, reviewer ONLY\n- Slack messages carry codes, never names or emails\n- Reviewer note is never written anywhere\n- Only the minimum fields go to the client ATS\n\n**Verify before a pilot:** resume-after-wait works with saving off; the approval link is protected by n8n's signed resume URL.",
+        "height": 260,
+        "width": 700
+      },
+      "id": "8d40e1f1-6a02-4db5-b57b-d17f63d51b82",
+      "name": "Note 1300",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        -260
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Fetch Candidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Candidate": {
+      "main": [
+        [
+          {
+            "node": "Fetch Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Job": {
+      "main": [
+        [
+          {
+            "node": "Check Client ATS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Client ATS": {
+      "main": [
+        [
+          {
+            "node": "Normalise and Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise and Check": {
+      "main": [
+        [
+          {
+            "node": "Compliance Passed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compliance Passed?": {
+      "main": [
+        [
+          {
+            "node": "Request Approval",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Outcome: Blocked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Approval": {
+      "main": [
+        [
+          {
+            "node": "Wait for Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Approval": {
+      "main": [
+        [
+          {
+            "node": "Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved?": {
+      "main": [
+        [
+          {
+            "node": "Push to Client ATS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Outcome: Not Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push to Client ATS": {
+      "main": [
+        [
+          {
+            "node": "Outcome: Submitted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Outcome: Push Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outcome: Submitted": {
+      "main": [
+        [
+          {
+            "node": "Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outcome: Push Failed": {
+      "main": [
+        [
+          {
+            "node": "Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outcome: Not Approved": {
+      "main": [
+        [
+          {
+            "node": "Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outcome: Blocked": {
+      "main": [
+        [
+          {
+            "node": "Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit Log": {
+      "main": [
+        [
+          {
+            "node": "Notify Recruiter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false
+  },
+  "pinData": {},
+  "tags": []
+}
